@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>QuantProf Tracker — Login</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: #0f0f13; color: #e6e6e6; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .card {
+    background: #17171d; border: 1px solid #2a2a33; border-radius: 14px;
+    padding: 32px; width: 100%; max-width: 380px;
+  }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  p.sub { color: #9a9aa5; margin: 0 0 24px; font-size: 0.9rem; }
+  label { display: block; font-size: 0.85rem; margin-bottom: 6px; color: #cfcfd6; }
+  input {
+    width: 100%; padding: 10px 12px; margin-bottom: 16px; border-radius: 8px;
+    border: 1px solid #33333d; background: #0f0f13; color: #fff; font-size: 0.95rem;
+  }
+  input:focus { outline: none; border-color: #7c5cff; }
+  button {
+    width: 100%; padding: 11px; border-radius: 8px; border: none; cursor: pointer;
+    font-size: 0.95rem; font-weight: 600; margin-top: 4px;
+  }
+  .primary { background: #7c5cff; color: white; }
+  .primary:hover { background: #6c4ce0; }
+  .link-btn {
+    background: none; color: #9a9aa5; margin-top: 14px; text-decoration: underline; font-weight: 400;
+  }
+  #msg { font-size: 0.85rem; margin-top: 14px; min-height: 18px; }
+  .error { color: #ff6b6b; }
+  .success { color: #4ade80; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1 id="formTitle">Log in</h1>
+    <p class="sub">QuantProf Tracker — your private progress tracker</p>
+
+    <label for="email">Email</label>
+    <input type="email" id="email" placeholder="you@example.com" />
+
+    <label for="password">Password</label>
+    <input type="password" id="password" placeholder="••••••••" />
+
+    <button class="primary" id="submitBtn">Log in</button>
+    <button class="link-btn" id="toggleMode">Don't have an account? Sign up</button>
+
+    <div id="msg"></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script>
+    let mode = "login"; // or "signup"
+
+    const formTitle = document.getElementById("formTitle");
+    const toggleBtn = document.getElementById("toggleMode");
+    const submitBtn = document.getElementById("submitBtn");
+    const msg = document.getElementById("msg");
+
+    toggleBtn.addEventListener("click", () => {
+      mode = mode === "login" ? "signup" : "login";
+      formTitle.textContent = mode === "login" ? "Log in" : "Sign up";
+      submitBtn.textContent = mode === "login" ? "Log in" : "Sign up";
+      toggleBtn.textContent = mode === "login"
+        ? "Don't have an account? Sign up"
+        : "Already have an account? Log in";
+      msg.textContent = "";
+    });
+
+    // If already logged in, skip straight to tracker
+    (async () => {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      if (session) window.location.href = "tracker.html";
+    })();
+
+    submitBtn.addEventListener("click", async () => {
+      const email = document.getElementById("email").value.trim();
+      const password = document.getElementById("password").value;
+      msg.textContent = "";
+      msg.className = "";
+
+      if (!email || !password) {
+        msg.textContent = "Please fill in both fields.";
+        msg.className = "error";
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Please wait...";
+
+      let result;
+      if (mode === "login") {
+        result = await supabaseClient.auth.signInWithPassword({ email, password });
+      } else {
+        result = await supabaseClient.auth.signUp({ email, password });
+      }
+
+      submitBtn.disabled = false;
+      submitBtn.textContent = mode === "login" ? "Log in" : "Sign up";
+
+      if (result.error) {
+        msg.textContent = result.error.message;
+        msg.className = "error";
+        return;
+      }
+
+      if (mode === "signup") {
+        msg.textContent = "Account created! You can log in now.";
+        msg.className = "success";
+      } else {
+        window.location.href = "tracker.html";
+      }
+    });
+  </script>
+</body>
+</html>

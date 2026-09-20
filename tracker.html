@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>QuantProf Tracker</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #0f0f13; color: #e6e6e6;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 16px 24px; border-bottom: 1px solid #2a2a33; position: sticky; top: 0; background: #0f0f13; z-index: 10;
+  }
+  header h1 { font-size: 1.1rem; margin: 0; }
+  #userEmail { color: #9a9aa5; font-size: 0.85rem; margin-right: 12px; }
+  button#logout {
+    background: none; border: 1px solid #33333d; color: #cfcfd6; padding: 6px 12px;
+    border-radius: 8px; cursor: pointer; font-size: 0.85rem;
+  }
+  button#logout:hover { border-color: #7c5cff; color: #fff; }
+
+  .controls {
+    display: flex; flex-wrap: wrap; gap: 10px; padding: 16px 24px; align-items: center;
+    border-bottom: 1px solid #2a2a33;
+  }
+  .controls select, .controls input {
+    background: #17171d; border: 1px solid #33333d; color: #fff; padding: 7px 10px;
+    border-radius: 8px; font-size: 0.85rem;
+  }
+  .stat { font-size: 0.85rem; color: #9a9aa5; margin-left: auto; }
+
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    text-align: left; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em;
+    color: #7a7a85; padding: 10px 24px; border-bottom: 1px solid #2a2a33;
+  }
+  tbody tr { border-bottom: 1px solid #1e1e25; }
+  tbody tr:hover { background: #16161c; }
+  tbody td { padding: 12px 24px; font-size: 0.9rem; vertical-align: middle; }
+  .num { color: #7a7a85; width: 40px; }
+  .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 0.72rem; font-weight: 600;
+  }
+  .cat-probability { background: rgba(168,85,247,0.15); color: #c084fc; }
+  .cat-brainteasers { background: rgba(251,146,60,0.15); color: #fb923c; }
+  .cat-combinatorics { background: rgba(236,72,153,0.15); color: #f472b6; }
+  .cat-default { background: rgba(148,163,184,0.15); color: #94a3b8; }
+  .companies { color: #9a9aa5; font-size: 0.8rem; }
+  .locked { opacity: 0.45; font-style: italic; }
+  input[type=checkbox] {
+    width: 20px; height: 20px; accent-color: #4ade80; cursor: pointer;
+  }
+  #loadingMsg { padding: 40px 24px; color: #9a9aa5; text-align: center; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>QuantProf Tracker</h1>
+    <div style="display:flex; align-items:center;">
+      <span id="userEmail"></span>
+      <button id="logout">Log out</button>
+    </div>
+  </header>
+
+  <div class="controls">
+    <select id="categoryFilter">
+      <option value="">All categories</option>
+    </select>
+    <select id="statusFilter">
+      <option value="">All statuses</option>
+      <option value="solved">Solved</option>
+      <option value="unsolved">Unsolved</option>
+    </select>
+    <input type="text" id="searchBox" placeholder="Search title..." />
+    <span class="stat" id="statCount"></span>
+  </div>
+
+  <div id="loadingMsg">Loading questions...</div>
+
+  <table id="questionTable" style="display:none;">
+    <thead>
+      <tr>
+        <th class="num">#</th>
+        <th>Title</th>
+        <th>Category</th>
+        <th>Difficulty</th>
+        <th>Companies</th>
+        <th>Solved</th>
+      </tr>
+    </thead>
+    <tbody id="tableBody"></tbody>
+  </table>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script>
+    let currentUser = null;
+    let questions = [];
+    let progressMap = {}; // question_id -> solved boolean
+
+    async function init() {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      if (!session) { window.location.href = "index.html"; return; }
+      currentUser = session.user;
+      document.getElementById("userEmail").textContent = currentUser.email;
+
+      document.getElementById("logout").addEventListener("click", async () => {
+        await supabaseClient.auth.signOut();
+        window.location.href = "index.html";
+      });
+
+      const [{ data: qData, error: qErr }, { data: pData, error: pErr }] = await Promise.all([
+        supabaseClient.from("questions").select("*").order("id"),
+        supabaseClient.from("progress").select("*").eq("user_id", currentUser.id)
+      ]);
+
+      if (qErr) { document.getElementById("loadingMsg").textContent = "Error loading questions: " + qErr.message; return; }
+      questions = qData || [];
+      (pData || []).forEach(row => { progressMap[row.question_id] = row.solved; });
+
+      populateCategoryFilter();
+      renderTable();
+
+      document.getElementById("loadingMsg").style.display = "none";
+      document.getElementById("questionTable").style.display = "table";
+
+      document.getElementById("categoryFilter").addEventListener("change", renderTable);
+      document.getElementById("statusFilter").addEventListener("change", renderTable);
+      document.getElementById("searchBox").addEventListener("input", renderTable);
+    }
+
+    function populateCategoryFilter() {
+      const cats = [...new Set(questions.map(q => q.category).filter(Boolean))].sort();
+      const sel = document.getElementById("categoryFilter");
+      cats.forEach(c => {
+        const opt = document.createElement("option");
+        opt.value = c; opt.textContent = c;
+        sel.appendChild(opt);
+      });
+    }
+
+    function renderTable() {
+      const catFilter = document.getElementById("categoryFilter").value;
+      const statusFilter = document.getElementById("statusFilter").value;
+      const search = document.getElementById("searchBox").value.toLowerCase();
+
+      const tbody = document.getElementById("tableBody");
+      tbody.innerHTML = "";
+
+      let solvedCount = 0;
+      let shownCount = 0;
+
+      questions.forEach(q => {
+        const solved = !!progressMap[q.id];
+        if (solved) solvedCount++;
+
+        if (catFilter && q.category !== catFilter) return;
+        if (statusFilter === "solved" && !solved) return;
+        if (statusFilter === "unsolved" && solved) return;
+        if (search && !q.title.toLowerCase().includes(search)) return;
+
+        shownCount++;
+        const tr = document.createElement("tr");
+
+        const catClass = q.category ? `cat-${q.category}` : "cat-default";
+        const companies = (q.companies || []).join(", ");
+
+        tr.innerHTML = `
+          <td class="num">${q.id}</td>
+          <td>${q.title}</td>
+          <td><span class="badge ${catClass}">${q.category || "-"}</span></td>
+          <td>${q.difficulty || "-"}</td>
+          <td class="companies">${companies}</td>
+          <td><input type="checkbox" data-qid="${q.id}" ${solved ? "checked" : ""} /></td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      document.getElementById("statCount").textContent =
+        `${solvedCount} / ${questions.length} solved — showing ${shownCount}`;
+
+      tbody.querySelectorAll("input[type=checkbox]").forEach(cb => {
+        cb.addEventListener("change", onToggle);
+      });
+    }
+
+    async function onToggle(e) {
+      const qid = parseInt(e.target.dataset.qid, 10);
+      const solved = e.target.checked;
+      progressMap[qid] = solved;
+
+      const { error } = await supabaseClient.from("progress").upsert({
+        user_id: currentUser.id,
+        question_id: qid,
+        solved,
+        updated_at: new Date().toISOString()
+      });
+
+      if (error) {
+        alert("Couldn't save: " + error.message);
+        e.target.checked = !solved;
+        progressMap[qid] = !solved;
+        return;
+      }
+      renderTable();
+    }
+
+    init();
+  </script>
+</body>
+</html>
