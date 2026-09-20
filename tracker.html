@@ -145,10 +145,31 @@
         window.location.href = "index.html";
       });
 
-      const [{ data: qData, error: qErr }, { data: pData, error: pErr }] = await Promise.all([
-        supabaseClient.from("questions").select("*").order("id"),
-        supabaseClient.from("progress").select("*").eq("user_id", currentUser.id)
-      ]);
+      async function fetchAllQuestions() {
+        let all = [];
+        let from = 0;
+        const batchSize = 1000;
+        while (true) {
+          const { data, error } = await supabaseClient
+            .from("questions")
+            .select("*")
+            .order("id")
+            .range(from, from + batchSize - 1);
+          if (error) throw error;
+          all = all.concat(data || []);
+          if (!data || data.length < batchSize) break;
+          from += batchSize;
+        }
+        return all;
+      }
+
+      let qData, qErr, pData, pErr;
+      try {
+        qData = await fetchAllQuestions();
+      } catch (e) {
+        qErr = e;
+      }
+      ({ data: pData, error: pErr } = await supabaseClient.from("progress").select("*").eq("user_id", currentUser.id));
 
       if (qErr) { document.getElementById("loadingMsg").textContent = "Error loading questions: " + qErr.message; return; }
       questions = qData || [];
