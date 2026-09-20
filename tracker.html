@@ -54,6 +54,20 @@
     width: 20px; height: 20px; accent-color: #4ade80; cursor: pointer;
   }
   #loadingMsg { padding: 40px 24px; color: #9a9aa5; text-align: center; }
+
+  .pagination {
+    display: flex; flex-wrap: wrap; gap: 6px; justify-content: center;
+    align-items: center; padding: 24px; border-top: 1px solid #2a2a33;
+  }
+  .pagination button {
+    min-width: 36px; height: 36px; padding: 0 8px; border-radius: 8px;
+    border: 1px solid #33333d; background: #17171d; color: #cfcfd6;
+    cursor: pointer; font-size: 0.85rem;
+  }
+  .pagination button:hover:not(:disabled) { border-color: #7c5cff; color: #fff; }
+  .pagination button.active { background: #7c5cff; border-color: #7c5cff; color: #fff; }
+  .pagination button:disabled { opacity: 0.35; cursor: default; }
+  .pagination .ellipsis { color: #7a7a85; padding: 0 4px; }
 </style>
 </head>
 <body>
@@ -73,6 +87,11 @@
       <option value="">All statuses</option>
       <option value="solved">Solved</option>
       <option value="unsolved">Unsolved</option>
+    </select>
+    <select id="sortBy">
+      <option value="id">Sort: # (default)</option>
+      <option value="difficulty_asc">Sort: Level (low → high)</option>
+      <option value="difficulty_desc">Sort: Level (high → low)</option>
     </select>
     <input type="text" id="searchBox" placeholder="Search title..." />
     <span class="stat" id="statCount"></span>
@@ -94,12 +113,23 @@
     <tbody id="tableBody"></tbody>
   </table>
 
+  <div class="pagination" id="pagination" style="display:none;"></div>
+
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
   <script>
     let currentUser = null;
     let questions = [];
     let progressMap = {}; // question_id -> solved boolean
+    const PAGE_SIZE = 20;
+    let currentPage = 1;
+
+    function difficultyNum(d) {
+      // "7/10" -> 7. Anything unparseable sorts last.
+      if (!d) return -1;
+      const n = parseInt(String(d).split("/")[0], 10);
+      return isNaN(n) ? -1 : n;
+    }
 
     async function init() {
       const { data: { session } } = await supabaseClient.auth.getSession();
@@ -127,9 +157,11 @@
       document.getElementById("loadingMsg").style.display = "none";
       document.getElementById("questionTable").style.display = "table";
 
-      document.getElementById("categoryFilter").addEventListener("change", renderTable);
-      document.getElementById("statusFilter").addEventListener("change", renderTable);
-      document.getElementById("searchBox").addEventListener("input", renderTable);
+      const resetAndRender = () => { currentPage = 1; renderTable(); };
+      document.getElementById("categoryFilter").addEventListener("change", resetAndRender);
+      document.getElementById("statusFilter").addEventListener("change", resetAndRender);
+      document.getElementById("sortBy").addEventListener("change", resetAndRender);
+      document.getElementById("searchBox").addEventListener("input", resetAndRender);
     }
 
     function populateCategoryFilter() {
@@ -145,26 +177,42 @@
     function renderTable() {
       const catFilter = document.getElementById("categoryFilter").value;
       const statusFilter = document.getElementById("statusFilter").value;
+      const sortBy = document.getElementById("sortBy").value;
       const search = document.getElementById("searchBox").value.toLowerCase();
+
+      const solvedCount = questions.filter(q => !!progressMap[q.id]).length;
+
+      // Filter
+      let filtered = questions.filter(q => {
+        const solved = !!progressMap[q.id];
+        if (catFilter && q.category !== catFilter) return false;
+        if (statusFilter === "solved" && !solved) return false;
+        if (statusFilter === "unsolved" && solved) return false;
+        if (search && !q.title.toLowerCase().includes(search)) return false;
+        return true;
+      });
+
+      // Sort
+      if (sortBy === "difficulty_asc") {
+        filtered.sort((a, b) => difficultyNum(a.difficulty) - difficultyNum(b.difficulty));
+      } else if (sortBy === "difficulty_desc") {
+        filtered.sort((a, b) => difficultyNum(b.difficulty) - difficultyNum(a.difficulty));
+      } else {
+        filtered.sort((a, b) => a.id - b.id);
+      }
+
+      // Paginate
+      const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+      if (currentPage > totalPages) currentPage = totalPages;
+      const start = (currentPage - 1) * PAGE_SIZE;
+      const pageItems = filtered.slice(start, start + PAGE_SIZE);
 
       const tbody = document.getElementById("tableBody");
       tbody.innerHTML = "";
 
-      let solvedCount = 0;
-      let shownCount = 0;
-
-      questions.forEach(q => {
+      pageItems.forEach(q => {
         const solved = !!progressMap[q.id];
-        if (solved) solvedCount++;
-
-        if (catFilter && q.category !== catFilter) return;
-        if (statusFilter === "solved" && !solved) return;
-        if (statusFilter === "unsolved" && solved) return;
-        if (search && !q.title.toLowerCase().includes(search)) return;
-
-        shownCount++;
         const tr = document.createElement("tr");
-
         const catClass = q.category ? `cat-${q.category}` : "cat-default";
         const companies = (q.companies || []).join(", ");
 
@@ -180,11 +228,54 @@
       });
 
       document.getElementById("statCount").textContent =
-        `${solvedCount} / ${questions.length} solved — showing ${shownCount}`;
+        `${solvedCount} / ${questions.length} solved — ${filtered.length} match filters`;
 
       tbody.querySelectorAll("input[type=checkbox]").forEach(cb => {
         cb.addEventListener("change", onToggle);
       });
+
+      renderPagination(totalPages);
+    }
+
+    function renderPagination(totalPages) {
+      const el = document.getElementById("pagination");
+      if (totalPages <= 1) { el.style.display = "none"; return; }
+      el.style.display = "flex";
+      el.innerHTML = "";
+
+      function makeBtn(label, page, opts = {}) {
+        const b = document.createElement("button");
+        b.textContent = label;
+        if (opts.active) b.classList.add("active");
+        if (opts.disabled) b.disabled = true;
+        b.addEventListener("click", () => { currentPage = page; renderTable(); window.scrollTo({top:0, behavior:"smooth"}); });
+        return b;
+      }
+
+      el.appendChild(makeBtn("‹ Prev", currentPage - 1, { disabled: currentPage === 1 }));
+
+      // Page numbers with ellipsis for long lists (like the real QP site)
+      const pages = [];
+      const windowSize = 1;
+      for (let p = 1; p <= totalPages; p++) {
+        if (p === 1 || p === totalPages || Math.abs(p - currentPage) <= windowSize) {
+          pages.push(p);
+        } else if (pages[pages.length - 1] !== "...") {
+          pages.push("...");
+        }
+      }
+      pages.forEach(p => {
+        if (p === "...") {
+          const span = document.createElement("span");
+          span.className = "ellipsis";
+          span.textContent = "...";
+          el.appendChild(span);
+        } else {
+          el.appendChild(makeBtn(String(p), p, { active: p === currentPage }));
+        }
+      });
+
+      el.appendChild(makeBtn("Next ›", currentPage + 1, { disabled: currentPage === totalPages }));
     }
 
     async function onToggle(e) {
